@@ -1047,13 +1047,8 @@ function initSupabase() {
     try {
         if (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase && window.supabase.createClient) {
             supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-            console.log('[Supabase] client initialized');
-        } else {
-            supabaseClient = null;
-            console.warn('[Supabase] not initialized (missing URL/key or supabase-js not loaded)');
         }
     } catch (e) {
-        console.error('[Supabase] init failed:', e);
         supabaseClient = null;
     }
 }
@@ -1066,11 +1061,7 @@ async function fetchTop5FromSupabase() {
         .order('score', { ascending: false })
         .order('created_at', { ascending: true })
         .limit(5);
-
-    if (error) {
-        console.error('[Supabase] fetchTop5 failed:', error);
-        return null;
-    }
+    if (error) return null;
     return (data || []).map(r => ({ name: r.nickname, score: r.score }));
 }
 
@@ -1084,11 +1075,7 @@ async function submitScoreToSupabase(scoreValue) {
         p_nickname: nick,
         p_score: scoreInt
     });
-
-    if (error) {
-        console.error('[Supabase] submit_score RPC failed:', error);
-        return null;
-    }
+    if (error) return null;
 
     // If the RPC returns top5 rows, normalize them; otherwise we'll refetch.
     if (Array.isArray(data)) {
@@ -1435,8 +1422,8 @@ function initEndGameRunner() {
         const levelConfig = {
             timeLimit: [20, 19, 18, 17, 16, 14, 13, 11, 10, 10], // Level 10: 15 seconds
             targetSize: [72, 64, 60, 56, 52, 48, 44, 40, 38, 35],
-            targetSpeed: [2.2, 2.8, 3.2, 3.6, 4, 4.4, 4.8, 5.8, 6.2, 8],
-            visibleDuration: [2200, 2000, 1800, 1600, 1200, 1000, 900, 800, 800, 1800]
+            targetSpeed: [2.2, 2.8, 3.2, 3.6, 4, 4.4, 4.8, 5.6, 6.2, 8],
+            visibleDuration: [2200, 2000, 1800, 1600, 1200, 1000, 900, 900, 800, 1800]
         };
 
         let obstacles = [];
@@ -4343,9 +4330,9 @@ async function loadLeaderboard() {
     updateLeaderboardDisplay();
 }
 
-async function saveToLeaderboard(scoreToSave = score) {
-    // Awaitable wrapper: ensures the network call has a chance to finish before the user clicks away.
-    return await submitScoreGlobal(scoreToSave);
+function saveToLeaderboard(scoreToSave = score) {
+    // Backward-compatible wrapper: if Supabase is configured we submit globally, otherwise local.
+    submitScoreGlobal(scoreToSave);
 }
 
 async function submitScoreGlobal(scoreToSave) {
@@ -4354,7 +4341,7 @@ async function submitScoreGlobal(scoreToSave) {
     if (maybeTop5 && maybeTop5.length) {
         leaderboard = maybeTop5.slice(0, 5);
         updateLeaderboardDisplay();
-        return { ok: true, source: 'supabase' };
+        return;
     }
 
     // If RPC didn't return top5 (or Supabase not configured), refetch (or fallback local)
@@ -4362,15 +4349,14 @@ async function submitScoreGlobal(scoreToSave) {
     if (top5 && top5.length) {
         leaderboard = top5.slice(0, 5);
         updateLeaderboardDisplay();
-        return { ok: true, source: 'supabase' };
+        return;
     }
 
     // Fallback: local leaderboard only
     saveToLeaderboardLocal(Math.max(0, Math.floor(Number(scoreToSave) || 0)));
-    return { ok: true, source: 'local' };
 }
 
-function updateLeaderboardDisplay() {
+        function updateLeaderboardDisplay() {
             const container = document.getElementById('leaderboardEntries');
             container.innerHTML = '';
             
@@ -4584,24 +4570,8 @@ function gameTick() {
                     spawnConfettiBurst();
                     initEndGameRunner();
                     const finalScore = getFinalScore();
-                    showCongratulations(finalScore, { saving: true });
-                    (async () => {
-                        const res = await saveToLeaderboard(finalScore);
-                        try {
-                            const statusEl = document.getElementById('saveStatus');
-                            if (statusEl) {
-                                statusEl.textContent = (res && res.source === 'supabase')
-                                    ? 'Score saved online ✅'
-                                    : 'Score saved locally (offline) ⚠️';
-                            }
-                            const coffeeBtn = document.getElementById('coffeeBtn');
-                            const sandwichBtn = document.getElementById('sandwichBtn');
-                            const playAgainBtn = document.getElementById('playAgainBtn');
-                            if (coffeeBtn) coffeeBtn.disabled = false;
-                            if (sandwichBtn) sandwichBtn.disabled = false;
-                            if (playAgainBtn) playAgainBtn.disabled = false;
-                        } catch (e) {}
-                    })();
+                    saveToLeaderboard(finalScore);
+                    showCongratulations(finalScore);
                     clearInterval(gameTimer);
                     return;
                 }
@@ -4654,7 +4624,7 @@ function gameTick() {
             return Math.round(score * missMult * restartMult);
         }
 
-function showCongratulations(finalScore, options = {}) {
+function showCongratulations(finalScore) {
     const congratsDiv = document.getElementById('congratulations');
     congratsDiv.style.display = 'block';
     // Disable restart controls while win overlay is shown
@@ -4669,11 +4639,11 @@ function showCongratulations(finalScore, options = {}) {
         <p style="font-size: 0.80em; margin: 4px 0; opacity: 0.95;">Base: <strong>${score}</strong> x <strong>${getMissMultiplier(totalMisses).toFixed(1)}</strong> (${getMissMultiplierLabel(totalMisses)}, Total Misses: ${totalMisses}) x <strong>${getRestartMultiplier(restartLevelClicks).toFixed(1)}</strong> (Restart Level clicks: ${restartLevelClicks})</p>
         <p style="font-size: 0.80em; margin: 4px 0; opacity: 0.95;">Accuracy: <strong>${computeAccuracy().toFixed(0)}%</strong></p>
         <div style="margin-top: 8px; display: flex; gap: 10px; justify-content: center; align-items: center;">
-            <button id="coffeeBtn" title="Buy me a coffee" style="font-size: 1.25em; padding: 6px 10px; border-radius: 10px;" ${options && options.saving ? "disabled" : ""}>☕</button>
-            <button id="sandwichBtn" title="Buy me a sandwich" style="font-size: 1.25em; padding: 6px 10px; border-radius: 10px;" ${options && options.saving ? "disabled" : ""}>🥪</button>
+            <button id="coffeeBtn" title="Buy me a coffee" style="font-size: 1.25em; padding: 6px 10px; border-radius: 10px;">☕</button>
+            <button id="sandwichBtn" title="Buy me a sandwich" style="font-size: 1.25em; padding: 6px 10px; border-radius: 10px;">🥪</button>
         </div>
 
-        <button id="playAgainBtn" style="margin-top: 7px; font-size: 0.88em; padding: 7px 18px;" ${options && options.saving ? "disabled" : ""}>Play Again</button>
+        <button id="playAgainBtn" style="margin-top: 7px; font-size: 0.88em; padding: 7px 18px;">Play Again</button>
     `;
 
     document.getElementById('playAgainBtn').addEventListener('click', () => {
